@@ -51,8 +51,13 @@
 #include "runtime/vmOperations.hpp"
 #include "services/threadService.hpp"
 #include "utilities/ticks.hpp"
+#include "runtime/globals.hpp"
+#include "runtime/os.hpp"
 
 #define VM_OP_NAME_INITIALIZE(name) #name,
+
+static bool first_full_gc_done = false;
+static volatile bool request_vm_exit = false;
 
 const char* VM_Operation::_names[VM_Operation::VMOp_Terminating] = \
   { VM_OPS_DO(VM_OP_NAME_INITIALIZE) };
@@ -61,23 +66,79 @@ void VM_Operation::set_calling_thread(Thread* thread) {
   _calling_thread = thread;
 }
 
+/* Suyash's Code */
+static bool is_serial_gc_vmop(VM_Operation::VMOp_Type t) {
+  return t == VM_Operation::VMOp_GenCollectForAllocation ||
+         t == VM_Operation::VMOp_GenCollectFull ||
+         t == VM_Operation::VMOp_CollectForMetadataAllocation;
+}
+
 void VM_Operation::evaluate() {
   ResourceMark rm;
-  LogTarget(Debug, vmoperation) lt;
-  if (lt.is_enabled()) {
-    LogStream ls(lt);
-    ls.print("begin ");
-    print_on_error(&ls);
-    ls.cr();
+
+  // If flag is off, behave exactly like stock HotSpot
+  if (!ExitOnSecondGC) {
+    doit();
+    return;
   }
+
+  if (is_serial_gc_vmop(type())) {
+
+    tty->print_cr(
+      "[DEBUG] Serial GC VMOp running: %s",
+      name()
+    );
+
+    if (first_full_gc_done) {
+      tty->print_cr(
+        "[FATAL] ExitOnSecondGC triggered. JVM exit requested."
+      );
+      request_vm_exit = true;
+    }
+
+    if (type() == VM_Operation::VMOp_GenCollectFull) {
+      tty->print_cr(
+        "[DEBUG] First full GC detected."
+      );
+      first_full_gc_done = true;
+    }
+
+  }
+
   doit();
-  if (lt.is_enabled()) {
-    LogStream ls(lt);
-    ls.print("end ");
-    print_on_error(&ls);
-    ls.cr();
-  }
+
+  if (request_vm_exit) {
+  tty->print_cr("[FATAL] ExitOnSecondGC: forcing process termination.");
+  os::_exit(1);
 }
+}
+
+
+
+
+/* Suyash's Code */
+
+/* Original Code: Uncomment when done */
+
+// void VM_Operation::evaluate() {
+//   ResourceMark rm;
+//   LogTarget(Debug, vmoperation) lt;
+//   if (lt.is_enabled()) {
+//     LogStream ls(lt);
+//     ls.print("begin ");
+//     print_on_error(&ls);
+//     ls.cr();
+//   }
+//   doit();
+//   if (lt.is_enabled()) {
+//     LogStream ls(lt);
+//     ls.print("end ");
+//     print_on_error(&ls);
+//     ls.cr();
+//   }
+// }
+
+/* Original Code: Uncomment when done */
 
 // Called by fatal error handler.
 void VM_Operation::print_on_error(outputStream* st) const {

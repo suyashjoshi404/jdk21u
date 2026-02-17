@@ -546,6 +546,9 @@ const int ObjectAlignmentInBytes = 8;
           "Run user-defined commands on first java.lang.OutOfMemoryError "  \
           "thrown from JVM")                                                \
                                                                             \
+  product(bool, ExitOnSecondGC, false,                                      \
+        "Exit the JVM after the first full GC when another GC occurs")      \
+                                                                            \
   product(bool, HeapDumpBeforeFullGC, false, MANAGEABLE,                    \
           "Dump heap to file before any major stop-the-world GC")           \
                                                                             \
