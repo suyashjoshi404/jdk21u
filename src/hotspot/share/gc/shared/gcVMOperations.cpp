@@ -52,26 +52,16 @@
 
 // Emit a unique PC for gem5 to key on. Mark noinline/used to keep a symbol
 // and prevent inlining; the volatile asm forces an instruction in the body.
-[[gnu::noinline]] [[gnu::used]] static void gc_entry_marker(const char* op_name) {
+[[gnu::noinline]] [[gnu::used]] static void gc_entry_marker(const char* label) {
   asm volatile("nop" ::: "memory");
-  tty->print_cr("[SerialGC-PC] %s entry pc=%p", op_name, (void*)gc_entry_marker);
+  tty->print_cr("[GC-PC] %s entry pc=%p", label, (void*)gc_entry_marker);
   tty->flush();
 }
 
-[[gnu::noinline]] [[gnu::used]] static void gc_exit_marker(const char* op_name) {
+[[gnu::noinline]] [[gnu::used]] static void gc_exit_marker(const char* label) {
   asm volatile("nop" ::: "memory");
-  tty->print_cr("[SerialGC-PC] %s exit pc=%p", op_name, (void*)gc_exit_marker);
+  tty->print_cr("[GC-PC] %s exit pc=%p", label, (void*)gc_exit_marker);
   tty->flush();
-}
-
-// Print the PC at the entry of serial GC VM operations so gem5 can match it.
-static void log_serial_gc_entry_pc(const char* op_name) {
-  gc_entry_marker(op_name);
-}
-
-// Print the PC when a GC operation reports completion.
-static void log_gc_exit_pc(const char* op_name) {
-  gc_exit_marker(op_name);
 }
 
 bool VM_GC_Sync_Operation::doit_prologue() {
@@ -101,12 +91,13 @@ const char* VM_GC_Operation::cause() const {
 // have to call it here, so it's only in one file.  Can't create new probes
 // for the other file anymore.   The dtrace probes have to remain stable.
 void VM_GC_Operation::notify_gc_begin(bool full) {
+  gc_entry_marker(full ? "notify_gc_begin(full)" : "notify_gc_begin(minor)");
   HOTSPOT_GC_BEGIN(
                    full);
 }
 
 void VM_GC_Operation::notify_gc_end() {
-  log_gc_exit_pc("VM_GC_Operation::notify_gc_end");
+  gc_exit_marker("notify_gc_end");
   HOTSPOT_GC_END();
 }
 
@@ -222,7 +213,6 @@ void VM_GC_HeapInspection::doit() {
 
 
 void VM_GenCollectForAllocation::doit() {
-  log_serial_gc_entry_pc("VM_GenCollectForAllocation::doit");
   SvcGCMarker sgcm(SvcGCMarker::MINOR);
 
   GenCollectedHeap* gch = GenCollectedHeap::heap();
@@ -236,7 +226,6 @@ void VM_GenCollectForAllocation::doit() {
 }
 
 void VM_GenCollectFull::doit() {
-  log_serial_gc_entry_pc("VM_GenCollectFull::doit");
   SvcGCMarker sgcm(SvcGCMarker::FULL);
 
   GenCollectedHeap* gch = GenCollectedHeap::heap();
@@ -257,7 +246,6 @@ VM_CollectForMetadataAllocation::VM_CollectForMetadataAllocation(ClassLoaderData
 }
 
 void VM_CollectForMetadataAllocation::doit() {
-  log_serial_gc_entry_pc("VM_CollectForMetadataAllocation::doit");
   SvcGCMarker sgcm(SvcGCMarker::FULL);
 
   CollectedHeap* heap = Universe::heap();

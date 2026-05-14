@@ -56,8 +56,8 @@
 
 #define VM_OP_NAME_INITIALIZE(name) #name,
 
+// Tracks whether a full GC has been observed (for ExitOnSecondGC).
 static bool first_full_gc_done = false;
-static volatile bool request_vm_exit = false;
 
 const char* VM_Operation::_names[VM_Operation::VMOp_Terminating] = \
   { VM_OPS_DO(VM_OP_NAME_INITIALIZE) };
@@ -66,79 +66,55 @@ void VM_Operation::set_calling_thread(Thread* thread) {
   _calling_thread = thread;
 }
 
-/* Suyash's Code */
-static bool is_serial_gc_vmop(VM_Operation::VMOp_Type t) {
-  return t == VM_Operation::VMOp_GenCollectForAllocation ||
-         t == VM_Operation::VMOp_GenCollectFull ||
-         t == VM_Operation::VMOp_CollectForMetadataAllocation;
-}
-
 void VM_Operation::evaluate() {
   ResourceMark rm;
 
   // If flag is off, behave exactly like stock HotSpot
   if (!ExitOnSecondGC) {
+    LogTarget(Debug, vmoperation) lt;
+    if (lt.is_enabled()) {
+      LogStream ls(lt);
+      ls.print("begin ");
+      print_on_error(&ls);
+      ls.cr();
+    }
     doit();
+    if (lt.is_enabled()) {
+      LogStream ls(lt);
+      ls.print("end ");
+      print_on_error(&ls);
+      ls.cr();
+    }
     return;
   }
 
-  if (is_serial_gc_vmop(type())) {
+  // --- ExitOnSecondGC logic (collector-agnostic) ---
+  // Snapshot the full-GC counter before the operation runs.
+  CollectedHeap* heap = Universe::heap();
+  unsigned int full_gc_before = (heap != nullptr) ? heap->total_full_collections() : 0;
 
-    tty->print_cr(
-      "[DEBUG] Serial GC VMOp running: %s",
-      name()
-    );
-
-    if (first_full_gc_done) {
-      tty->print_cr(
-        "[FATAL] ExitOnSecondGC triggered. JVM exit requested."
-      );
-      request_vm_exit = true;
-    }
-
-    if (type() == VM_Operation::VMOp_GenCollectFull) {
-      tty->print_cr(
-        "[DEBUG] First full GC detected."
-      );
-      first_full_gc_done = true;
-    }
-
-  }
+  // If a full GC already happened previously, any new GC operation
+  // should trigger exit *after* we let it complete.
+  bool should_exit = first_full_gc_done;
 
   doit();
 
-  if (request_vm_exit) {
-  tty->print_cr("[FATAL] ExitOnSecondGC: forcing process termination.");
-  os::_exit(1);
+  // Check if this operation caused a full GC
+  unsigned int full_gc_after = (heap != nullptr) ? heap->total_full_collections() : 0;
+  if (!first_full_gc_done && full_gc_after > full_gc_before) {
+    first_full_gc_done = true;
+    tty->print_cr("[ExitOnSecondGC] First full GC detected (op=%s, full_gc_count=%u).",
+                  name(), full_gc_after);
+    tty->flush();
+  }
+
+  if (should_exit) {
+    tty->print_cr("[ExitOnSecondGC] GC after first full GC detected (op=%s). Exiting.",
+                  name());
+    tty->flush();
+    os::_exit(1);
+  }
 }
-}
-
-
-
-
-/* Suyash's Code */
-
-/* Original Code: Uncomment when done */
-
-// void VM_Operation::evaluate() {
-//   ResourceMark rm;
-//   LogTarget(Debug, vmoperation) lt;
-//   if (lt.is_enabled()) {
-//     LogStream ls(lt);
-//     ls.print("begin ");
-//     print_on_error(&ls);
-//     ls.cr();
-//   }
-//   doit();
-//   if (lt.is_enabled()) {
-//     LogStream ls(lt);
-//     ls.print("end ");
-//     print_on_error(&ls);
-//     ls.cr();
-//   }
-// }
-
-/* Original Code: Uncomment when done */
 
 // Called by fatal error handler.
 void VM_Operation::print_on_error(outputStream* st) const {
